@@ -9,7 +9,7 @@
     "install": "node-gyp rebuild"
   },
   "gypfile": true,
-  "name": "macos-export-certificate-and-key",
+  "name": "@mongosh/macos-export-certificate-and-key",
   "version": "1.0.0",
   "description": "Export a certificate and its corresponding private key from the MacOS default keychain",
   "repository": {
