@@ -66,7 +66,7 @@ bool isMatchingCertificate(std::string subject, const SecCertificateRef certific
 {
   CFPointer<CFStringRef> certSubject(SecCertificateCopySubjectSummary(certificate));
   const char *subj = CFStringGetCStringPtr(certSubject.get(), kCFStringEncodingUTF8);
-  if (subj == subject)
+  if (subj && subj == subject)
   {
     return true;
   }
@@ -193,10 +193,10 @@ Value ExportCertificate(const CallbackInfo &args)
   return exportBuffer;
 }
 
-Object Init(Env env, Object exports)
+Object InitMacosExportCertificateAndKey(Env env, Object exports)
 {
   exports["exportCertificate"] = Function::New(env, ExportCertificate);
   return exports;
 }
 
-NODE_API_MODULE(macos_export_certificate_and_key, Init)
+NODE_API_MODULE(macos_export_certificate_and_key, InitMacosExportCertificateAndKey)
