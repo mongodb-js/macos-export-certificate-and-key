@@ -4,6 +4,8 @@
 #include <CommonCrypto/CommonCrypto.h>
 #include <Security/Security.h>
 
+namespace {
+
 using namespace Napi;
 
 typedef std::function<bool(SecCertificateRef)> CertificatePredicate;
@@ -193,7 +195,9 @@ Value ExportCertificate(const CallbackInfo &args)
   return exportBuffer;
 }
 
-Object InitMacosExportCertificateAndKey(Env env, Object exports)
+} // anonymous namespace
+
+static Object InitMacosExportCertificateAndKey(Env env, Object exports)
 {
   exports["exportCertificate"] = Function::New(env, ExportCertificate);
   return exports;
