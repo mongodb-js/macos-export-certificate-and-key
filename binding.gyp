@@ -3,7 +3,7 @@
     {
       'target_name': 'macos_export_certificate_and_key',
       'sources': [ 'binding.cc' ],
-      'include_dirs': ["<!@(node -p \"require('node-addon-api').include\")"],
+      'include_dirs': ["<!(node -p \"require('node-addon-api').include_dir\")"],
       'dependencies': ["<!(node -p \"require('node-addon-api').gyp\")"],
       'cflags!': [ '-fno-exceptions' ],
       'cflags_cc!': [ '-fno-exceptions' ],
