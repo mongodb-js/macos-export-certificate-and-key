@@ -1,8 +1,8 @@
-const { exportCertificate } = require('bindings')('macos_export_certificate_and_key');
+const { exportCertificateAndKey, exportAllCertificates } = require('bindings')('macos_export_certificate_and_key');
 const { randomBytes } = require('crypto');
 const util = require('util');
 
-module.exports = function exportCertificateAndPrivateKey({
+function exportCertificateAndPrivateKey({
     subject,
     thumbprint
 }) {
@@ -20,9 +20,13 @@ module.exports = function exportCertificateAndPrivateKey({
   }
 
   const passphrase = randomBytes(12).toString('hex');
-  const pfx = exportCertificate(
+  const pfx = exportCertificateAndKey(
     subject ? { subject } : { thumbprint },
     passphrase
   );
   return { passphrase, pfx };
 };
+
+module.exports = exportCertificateAndPrivateKey;
+module.exports.exportCertificateAndPrivateKey = exportCertificateAndPrivateKey;
+module.exports.exportSystemCertificates = exportAllCertificates;
