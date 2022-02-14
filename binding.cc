@@ -98,10 +98,28 @@ bool isMatchingCertificate(std::vector<uint8_t> thumbprint, const SecCertificate
   return memcmp(&thumbprint[0], hashPtr, thumbprint.size()) == 0;
 }
 
-CFMutableDictionaryRef createQueryDictionary()
+CFMutableDictionaryRef createQueryDictionary(CFStringRef sec_class, bool add_system_keychain)
 {
-  CFMutableDictionaryRef dict = CFDictionaryCreateMutable(nullptr, 3, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  CFDictionaryAddValue(dict, kSecClass, kSecClassIdentity);
+  CFPointer<CFMutableArrayRef> new_search_list(nullptr);
+  if (add_system_keychain) {
+    SecKeychainRef system_roots = nullptr;
+    OSStatus kcStatus = SecKeychainOpen("/System/Library/Keychains/SystemRootCertificates.keychain", &system_roots);
+
+    CFArrayRef current_search_list;
+    SecKeychainCopySearchList(&current_search_list);
+    new_search_list = CFArrayCreateMutableCopy(NULL, 0, current_search_list);
+    CFRelease(current_search_list);
+    if (!kcStatus) {
+      CFArrayAppendValue(new_search_list.get(), system_roots);
+      CFRelease(system_roots);
+    }
+  }
+
+  CFMutableDictionaryRef dict = CFDictionaryCreateMutable(nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (add_system_keychain) {
+    CFDictionaryAddValue(dict, kSecMatchSearchList, new_search_list.get());
+  }
+  CFDictionaryAddValue(dict, kSecClass, sec_class);
   CFDictionaryAddValue(dict, kSecReturnRef, kCFBooleanTrue);
   CFDictionaryAddValue(dict, kSecMatchLimit, kSecMatchLimitAll);
   return dict;
@@ -140,16 +158,19 @@ CFPointer<SecIdentityRef> findFirstMatchingIdentity(const Env &env, const CFDict
   throw Error::New(env, "Could not find a matching certificate");
 }
 
-CFPointer<CFDataRef> extractCertificateAndPrivateKey(const Env &env, const SecIdentityRef &identity, const std::string &passphrase)
+template<typename SecItem>
+CFPointer<CFDataRef> extractCertificateAndPrivateKey(const Env &env, const SecItem &item, const std::string &passphrase, SecExternalFormat format)
 {
-  CFStringRef pass = CFStringCreateWithCString(nullptr, passphrase.c_str(), kCFStringEncodingUTF8);
-  SecItemImportExportKeyParameters params = {
-      .passphrase = pass};
+  SecItemImportExportKeyParameters params {};
+  if (format == kSecFormatPKCS12) {
+    CFStringRef pass = CFStringCreateWithCString(nullptr, passphrase.c_str(), kCFStringEncodingUTF8);
+    params.passphrase = pass;
+  };
 
   CFDataRef exportData;
   OSStatus status = SecItemExport(
-      identity,
-      kSecFormatPKCS12,
+      item,
+      format,
       0,
       &params,
       &exportData);
@@ -157,7 +178,7 @@ CFPointer<CFDataRef> extractCertificateAndPrivateKey(const Env &env, const SecId
   return CFPointer<CFDataRef>(exportData);
 }
 
-Value ExportCertificate(const CallbackInfo &args)
+Value ExportCertificateAndKey(const CallbackInfo &args)
 {
   Object search_spec = args[0].ToObject();
   std::string passphrase = args[1].ToString().Utf8Value();
@@ -186,20 +207,53 @@ Value ExportCertificate(const CallbackInfo &args)
 
   // Filtering for kSecAttrLabel and kSecAttrPublicKeyHash does not work as epxected
   // we look for all identities and filter manually
-  CFPointer<CFMutableDictionaryRef> query(createQueryDictionary());
+  CFPointer<CFMutableDictionaryRef> query(createQueryDictionary(kSecClassIdentity, false));
   CFPointer<SecIdentityRef> identity(findFirstMatchingIdentity(args.Env(), query.get(), predicate));
 
-  CFPointer<CFDataRef> exportData = extractCertificateAndPrivateKey(args.Env(), identity.get(), passphrase);
+  CFPointer<CFDataRef> exportData = extractCertificateAndPrivateKey(args.Env(), identity.get(), passphrase, kSecFormatPKCS12);
   Buffer<uint8_t> exportBuffer = Buffer<uint8_t>::Copy(args.Env(), CFDataGetBytePtr(exportData.get()), CFDataGetLength(exportData.get()));
 
   return exportBuffer;
+}
+
+Value ExportAllCertificates(const CallbackInfo &args)
+{
+  Env env = args.Env();
+  Array results = Array::New(env);
+  // Filtering for kSecAttrLabel and kSecAttrPublicKeyHash does not work as epxected
+  // we look for all identities and filter manually
+  CFPointer<CFMutableDictionaryRef> query(createQueryDictionary(kSecClassCertificate, true));
+
+  CFArrayRef _items = nullptr;
+  OSStatus status = SecItemCopyMatching(query.get(), (CFTypeRef *)&_items);
+  failOnError(status, env, "SecItemCopyMatching failed to load certificates");
+  if (CFGetTypeID(_items) != CFArrayGetTypeID())
+  {
+    throw Error::New(env, "Expected SecItemCopyMatching to return an array");
+  }
+
+  CFPointer<CFArrayRef> items(_items);
+  for (CFIndex i = 0; i < CFArrayGetCount(items.get()); i++)
+  {
+    SecCertificateRef cert = (SecCertificateRef)CFArrayGetValueAtIndex(items.get(), i);
+    if (CFGetTypeID(cert) != SecCertificateGetTypeID())
+    {
+      throw Error::New(env, "Expected SecItemCopyMatching to return SecCertificateRef items");
+    }
+
+    CFPointer<CFDataRef> exportData = extractCertificateAndPrivateKey(args.Env(), cert, "", kSecFormatPEMSequence);
+    results[(uint32_t)i] = String::New(args.Env(), (const char*)CFDataGetBytePtr(exportData.get()), CFDataGetLength(exportData.get()));
+  }
+
+  return results;
 }
 
 } // anonymous namespace
 
 static Object InitMacosExportCertificateAndKey(Env env, Object exports)
 {
-  exports["exportCertificate"] = Function::New(env, ExportCertificate);
+  exports["exportCertificateAndKey"] = Function::New(env, ExportCertificateAndKey);
+  exports["exportAllCertificates"] = Function::New(env, ExportAllCertificates);
   return exports;
 }
 

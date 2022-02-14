@@ -1,9 +1,13 @@
 const tls = require('tls');
 const fs = require('fs');
+const child_process = require('child_process');
 const assert = require('assert');
-const exportCertificate = require('./');
+const {
+  exportCertificateAndPrivateKey,
+  exportSystemCertificates
+} = require('./');
 
-describe('exportCertificate', () => {
+describe('exportCertificateAndPrivateKey', () => {
   let tlsServer;
   let authorized;
   let resolveAuthorized;
@@ -37,12 +41,12 @@ describe('exportCertificate', () => {
 
   it('throws when no cert can be found', () => {
     assert.throws(() => {
-      exportCertificate({ subject: 'Banana Corp '});
+      exportCertificateAndPrivateKey({ subject: 'Banana Corp '});
     }, /Could not find a matching certificate/);
   });
 
   it('loads a certificate based on its thumbprint', async() => {
-    const { passphrase, pfx } = exportCertificate({
+    const { passphrase, pfx } = exportCertificateAndPrivateKey({
       thumbprint: Buffer.from('d755afda2bbad2509d39eca5968553b9103305af', 'hex')
     });
     tls.connect({ ...tlsServerConnectOptions, passphrase, pfx });
@@ -50,10 +54,25 @@ describe('exportCertificate', () => {
   });
 
   it('loads a certificate based on its subject', async() => {
-    const { passphrase, pfx } = exportCertificate({
+    const { passphrase, pfx } = exportCertificateAndPrivateKey({
       subject: 'Internet Widgits Pty Ltd'
     });
     tls.connect({ ...tlsServerConnectOptions, passphrase, pfx });
     assert.strictEqual(await authorized, true);
+  });
+});
+
+describe('exportSystemCertificates', () => {
+  it('exports all system certificates', () => {
+    const certsFromSecurity = child_process.execSync(
+      'security find-certificate -a -p && security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain', {
+        encoding: 'utf8'
+      })
+      .match(/^-----BEGIN\sCERTIFICATE-----[\s\S]+?-----END\sCERTIFICATE-----$/mg)
+      .map(str => str.trim());
+    const certsFromAddon = exportSystemCertificates()
+      .map(str => str.trim());
+
+    assert.deepStrictEqual(new Set(certsFromAddon), new Set(certsFromSecurity));
   });
 });
