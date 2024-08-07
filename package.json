@@ -26,7 +26,7 @@
     "darwin"
   ],
   "files": [
-    "binding.cc",
+    "src/binding.cc",
     "binding.gyp",
     "index.d.ts",
     "index.js",
