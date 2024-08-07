@@ -51,11 +51,11 @@ const char* getSecErrorString(OSStatus status) {
   return CFStringGetCStringPtr(str.get(), kCFStringEncodingUTF8);
 }
 
-void failOnError(OSStatus status, Env env, const char* error) {
+void failOnError(OSStatus status, const char* error) {
   if (status != errSecSuccess) {
     char msg[256];
     snprintf(msg, sizeof(msg), "%s: %s", error, getSecErrorString(status));
-    throw Error::New(env, msg);
+    throw std::runtime_error(msg);
   }
 }
 
@@ -106,12 +106,12 @@ CFMutableDictionaryRef createQueryDictionary(CFStringRef sec_class, bool add_sys
   return dict;
 }
 
-CFPointer<SecIdentityRef> findFirstMatchingIdentity(Env env, const CFDictionaryRef& query, const CertificatePredicate& predicate) {
+CFPointer<SecIdentityRef> findFirstMatchingIdentity(const CFDictionaryRef& query, const CertificatePredicate& predicate) {
   CFArrayRef _items = nullptr;
   OSStatus status = SecItemCopyMatching(query, reinterpret_cast<CFTypeRef*>(&_items));
-  failOnError(status, env, "SecItemCopyMatching failed to load certificates");
+  failOnError(status, "SecItemCopyMatching failed to load certificates");
   if (CFGetTypeID(_items) != CFArrayGetTypeID()) {
-    throw Error::New(env, "Expected SecItemCopyMatching to return an array");
+    throw std::runtime_error("Expected SecItemCopyMatching to return an array");
   }
 
   CFPointer<CFArrayRef> items(_items);
@@ -119,12 +119,12 @@ CFPointer<SecIdentityRef> findFirstMatchingIdentity(Env env, const CFDictionaryR
     SecIdentityRef identity = reinterpret_cast<SecIdentityRef>(const_cast<void*>(
         CFArrayGetValueAtIndex(items.get(), i)));
     if (CFGetTypeID(identity) != SecIdentityGetTypeID()) {
-      throw Error::New(env, "Expected SecItemCopyMatching to return SecIdentityRef items");
+      throw std::runtime_error("Expected SecItemCopyMatching to return SecIdentityRef items");
     }
 
     SecCertificateRef certRef;
     OSStatus copyCertStatus = SecIdentityCopyCertificate(identity, &certRef);
-    failOnError(copyCertStatus, env, "SecIdentityCopyCertificate");
+    failOnError(copyCertStatus, "SecIdentityCopyCertificate");
     CFPointer<SecCertificateRef> cert(certRef);
 
     if (predicate(cert.get())) {
@@ -132,11 +132,11 @@ CFPointer<SecIdentityRef> findFirstMatchingIdentity(Env env, const CFDictionaryR
     }
   }
 
-  throw Error::New(env, "Could not find a matching certificate");
+  throw std::runtime_error("Could not find a matching certificate");
 }
 
 template<typename SecItem>
-CFPointer<CFDataRef> extractCertificateAndPrivateKey(Env env, const SecItem& item, const std::string& passphrase, SecExternalFormat format) {
+CFPointer<CFDataRef> extractCertificateAndPrivateKey(const SecItem& item, const std::string& passphrase, SecExternalFormat format) {
   SecItemImportExportKeyParameters params {};
   if (format == kSecFormatPKCS12) {
     CFStringRef pass = CFStringCreateWithCString(nullptr, passphrase.c_str(), kCFStringEncodingUTF8);
@@ -150,21 +150,14 @@ CFPointer<CFDataRef> extractCertificateAndPrivateKey(Env env, const SecItem& ite
       0,
       &params,
       &exportData);
-  failOnError(status, env, "Failed to export certificate");
+  failOnError(status, "Failed to export certificate");
   return CFPointer<CFDataRef>(exportData);
 }
 
-Value ExportCertificateAndKey(const CallbackInfo& args) {
-  Object search_spec = args[0].ToObject();
-  std::string passphrase = args[1].ToString().Utf8Value();
-
-  std::function<bool(SecCertificateRef)> predicate;
+CertificatePredicate ExportCertificateAndKeyMakePredicate(Object search_spec) {
   if (search_spec.HasOwnProperty("subject")) {
     std::string subject_str = search_spec.Get("subject").ToString().Utf8Value();
-    CFPointer<CFStringRef> subject(CFStringCreateWithCString(
-        nullptr, subject_str.c_str(), kCFStringEncodingUTF8));
-
-    predicate = [subject_str](SecCertificateRef cert) -> bool {
+    return [subject_str](SecCertificateRef cert) -> bool {
       return isMatchingCertificate(subject_str, cert);
     };
   } else {
@@ -172,67 +165,96 @@ Value ExportCertificateAndKey(const CallbackInfo& args) {
     const uint8_t *data = buff.Data();
     std::vector<uint8_t> thumbprint(data, data + buff.Length());
 
-    predicate = [thumbprint](SecCertificateRef cert) -> bool {
+    return [thumbprint](SecCertificateRef cert) -> bool {
       return isMatchingCertificate(thumbprint, cert);
     };
   }
+}
 
+std::vector<uint8_t> ExportCertificateAndKey(CertificatePredicate predicate, std::string passphrase) {
   // Filtering for kSecAttrLabel and kSecAttrPublicKeyHash does not work as epxected
   // we look for all identities and filter manually
   CFPointer<CFMutableDictionaryRef> query(createQueryDictionary(kSecClassIdentity, false));
-  CFPointer<SecIdentityRef> identity(findFirstMatchingIdentity(args.Env(), query.get(), predicate));
+  CFPointer<SecIdentityRef> identity(findFirstMatchingIdentity(query.get(), predicate));
 
   CFPointer<CFDataRef> exportData = extractCertificateAndPrivateKey(
-      args.Env(), identity.get(), passphrase, kSecFormatPKCS12);
-  Buffer<uint8_t> exportBuffer = Buffer<uint8_t>::Copy(
-      args.Env(), 
-      CFDataGetBytePtr(exportData.get()), 
-      CFDataGetLength(exportData.get()));
+      identity.get(), passphrase, kSecFormatPKCS12);
 
-  return exportBuffer;
+  const uint8_t* base = CFDataGetBytePtr(exportData.get());
+  const size_t len = CFDataGetLength(exportData.get());
+  return std::vector<uint8_t>(base, base + len);
 }
 
-Value ExportAllCertificates(const CallbackInfo& args) {
-  Env env = args.Env();
-  Array results = Array::New(env);
+std::vector<std::string> ExportAllCertificates() {
+  std::vector<std::string> results;
+
   // Filtering for kSecAttrLabel and kSecAttrPublicKeyHash does not work as epxected
   // we look for all identities and filter manually
   CFPointer<CFMutableDictionaryRef> query(createQueryDictionary(kSecClassCertificate, true));
 
   CFArrayRef _items = nullptr;
   OSStatus status = SecItemCopyMatching(query.get(), reinterpret_cast<CFTypeRef*>(&_items));
-  failOnError(status, env, "SecItemCopyMatching failed to load certificates");
-  if (CFGetTypeID(_items) != CFArrayGetTypeID())
-  {
-    throw Error::New(env, "Expected SecItemCopyMatching to return an array");
+  failOnError(status, "SecItemCopyMatching failed to load certificates");
+  if (CFGetTypeID(_items) != CFArrayGetTypeID()) {
+    throw std::runtime_error("Expected SecItemCopyMatching to return an array");
   }
 
   CFPointer<CFArrayRef> items(_items);
-  for (CFIndex i = 0; i < CFArrayGetCount(items.get()); i++)
-  {
+  for (CFIndex i = 0; i < CFArrayGetCount(items.get()); i++) {
     SecCertificateRef cert = reinterpret_cast<SecCertificateRef>(const_cast<void*>(
         CFArrayGetValueAtIndex(items.get(), i)));
     if (CFGetTypeID(cert) != SecCertificateGetTypeID()) {
-      throw Error::New(env, "Expected SecItemCopyMatching to return SecCertificateRef items");
+      throw std::runtime_error("Expected SecItemCopyMatching to return SecCertificateRef items");
     }
 
     CFPointer<CFDataRef> exportData = extractCertificateAndPrivateKey(
-        args.Env(), cert, "", kSecFormatPEMSequence);
-    results[static_cast<uint32_t>(i)] = String::New(
-        args.Env(),
+        cert, "", kSecFormatPEMSequence);
+
+    results.push_back({
         reinterpret_cast<const char*>(CFDataGetBytePtr(exportData.get())),
-        CFDataGetLength(exportData.get()));
+        static_cast<size_t>(CFDataGetLength(exportData.get()))
+    });
   }
 
   return results;
 }
 
+Value ExportCertificateAndKeySync(const CallbackInfo& args) {
+  CertificatePredicate predicate = ExportCertificateAndKeyMakePredicate(args[0].ToObject());
+  std::string passphrase = args[1].ToString().Utf8Value();
+
+  try {
+    const auto& result = ExportCertificateAndKey(std::move(predicate), std::move(passphrase));
+    return Buffer<uint8_t>::Copy(args.Env(), result.data(), result.size());
+  } catch (const std::exception& e) {
+    throw Error::New(args.Env(), e.what());
+  }
+}
+
+Value ExportAllCertificatesSync(const CallbackInfo& args) {
+  Env env = args.Env();
+  Array results = Array::New(env);
+
+  try {
+    auto result = ExportAllCertificates();
+    if (result.size() > static_cast<uint32_t>(-1)) {
+      throw std::runtime_error("result length exceeds uint32 max");
+    }
+    for (uint32_t i = 0; i < result.size(); i++) {
+      results[i] = String::New(args.Env(), std::move(result[i]));
+    }
+
+    return results;
+  } catch (const std::exception& e) {
+    throw Error::New(env, e.what());
+  }
+}
+
 } // anonymous namespace
 
-static Object InitMacosExportCertificateAndKey(Env env, Object exports)
-{
-  exports["exportCertificateAndKey"] = Function::New(env, ExportCertificateAndKey);
-  exports["exportAllCertificates"] = Function::New(env, ExportAllCertificates);
+static Object InitMacosExportCertificateAndKey(Env env, Object exports) {
+  exports["exportCertificateAndKey"] = Function::New(env, ExportCertificateAndKeySync);
+  exports["exportAllCertificates"] = Function::New(env, ExportAllCertificatesSync);
   return exports;
 }
 
