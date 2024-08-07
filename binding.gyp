@@ -2,7 +2,7 @@
   'targets': [
     {
       'target_name': 'macos_export_certificate_and_key',
-      'sources': [ 'src/binding.cc' ],
+      'sources': [ 'src/binding.cc', 'src/certs.cc' ],
       'include_dirs': ["<!(node -p \"require('node-addon-api').include_dir\")"],
       'dependencies': ["<!(node -p \"require('node-addon-api').gyp\")"],
       'cflags!': [ '-fno-exceptions' ],
