@@ -4,7 +4,9 @@ const child_process = require('child_process');
 const assert = require('assert');
 const {
   exportCertificateAndPrivateKey,
-  exportSystemCertificates
+  exportCertificateAndPrivateKeyAsync,
+  exportSystemCertificates,
+  exportSystemCertificatesAsync
 } = require('./');
 
 describe('exportCertificateAndPrivateKey', () => {
@@ -39,40 +41,56 @@ describe('exportCertificateAndPrivateKey', () => {
     tlsServer.close();
   });
 
-  it('throws when no cert can be found', () => {
-    assert.throws(() => {
-      exportCertificateAndPrivateKey({ subject: 'Banana Corp '});
-    }, /Could not find a matching certificate/);
-  });
+  for (const method of ['sync', 'async']) {
+    const fn = {
+      sync: exportCertificateAndPrivateKey,
+      async: exportCertificateAndPrivateKeyAsync
+    }[method];
+    context(method, () => {
+      it('throws when no cert can be found', async() => {
+        await assert.rejects(async() => {
+          await fn({ subject: 'Banana Corp '});
+        }, /Could not find a matching certificate/);
+      });
 
-  it('loads a certificate based on its thumbprint', async() => {
-    const { passphrase, pfx } = exportCertificateAndPrivateKey({
-      thumbprint: Buffer.from('d755afda2bbad2509d39eca5968553b9103305af', 'hex')
-    });
-    tls.connect({ ...tlsServerConnectOptions, passphrase, pfx });
-    assert.strictEqual(await authorized, true);
-  });
+      it('loads a certificate based on its thumbprint', async() => {
+        const { passphrase, pfx } = await fn({
+          thumbprint: Buffer.from('d755afda2bbad2509d39eca5968553b9103305af', 'hex')
+        });
+        tls.connect({ ...tlsServerConnectOptions, passphrase, pfx });
+        assert.strictEqual(await authorized, true);
+      });
 
-  it('loads a certificate based on its subject', async() => {
-    const { passphrase, pfx } = exportCertificateAndPrivateKey({
-      subject: 'Internet Widgits Pty Ltd'
+      it('loads a certificate based on its subject', async() => {
+        const { passphrase, pfx } = await fn({
+          subject: 'Internet Widgits Pty Ltd'
+        });
+        tls.connect({ ...tlsServerConnectOptions, passphrase, pfx });
+        assert.strictEqual(await authorized, true);
+      });
     });
-    tls.connect({ ...tlsServerConnectOptions, passphrase, pfx });
-    assert.strictEqual(await authorized, true);
-  });
+  }
 });
 
 describe('exportSystemCertificates', () => {
-  it('exports all system certificates', () => {
-    const certsFromSecurity = child_process.execSync(
-      'security find-certificate -a -p && security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain', {
-        encoding: 'utf8'
-      })
-      .match(/^-----BEGIN\sCERTIFICATE-----[\s\S]+?-----END\sCERTIFICATE-----$/mg)
-      .map(str => str.trim());
-    const certsFromAddon = exportSystemCertificates()
-      .map(str => str.trim());
+  for (const method of ['sync', 'async']) {
+    const fn = {
+      sync: exportSystemCertificates,
+      async: exportSystemCertificatesAsync
+    }[method];
+    context(method, () => {
+      it('exports all system certificates', async() => {
+        const certsFromSecurity = child_process.execSync(
+          'security find-certificate -a -p && security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain', {
+            encoding: 'utf8'
+          })
+          .match(/^-----BEGIN\sCERTIFICATE-----[\s\S]+?-----END\sCERTIFICATE-----$/mg)
+          .map(str => str.trim());
+        const certsFromAddon = (await fn())
+          .map(str => str.trim());
 
-    assert.deepStrictEqual(new Set(certsFromAddon), new Set(certsFromSecurity));
-  });
+        assert.deepStrictEqual(new Set(certsFromAddon), new Set(certsFromSecurity));
+      });
+    });
+  }
 });

@@ -1,11 +1,14 @@
-const { exportCertificateAndKey, exportAllCertificates } = require('bindings')('macos_export_certificate_and_key');
+const {
+  exportCertificateAndKey,
+  exportCertificateAndKeyAsync,
+  exportAllCertificates,
+  exportAllCertificatesAsync
+} = require('bindings')('macos_export_certificate_and_key');
 const { randomBytes } = require('crypto');
 const util = require('util');
+const { promisify } = util;
 
-function exportCertificateAndPrivateKey({
-    subject,
-    thumbprint
-}) {
+function validateSubjectAndThumbprint(subject, thumbprint) {
   if (!subject && !thumbprint) {
     throw new Error('Need to specify either `subject` or `thumbprint`');
   }
@@ -18,9 +21,28 @@ function exportCertificateAndPrivateKey({
   if (thumbprint && !util.types.isUint8Array(thumbprint)) {
     throw new Error('`thumbprint` needs to be a Uint8Array');
   }
+}
 
-  const passphrase = randomBytes(12).toString('hex');
-  const pfx = exportCertificateAndKey(
+function exportCertificateAndPrivateKey({
+  subject,
+  thumbprint
+}) {
+validateSubjectAndThumbprint(subject, thumbprint);
+const passphrase = randomBytes(12).toString('hex');
+const pfx = exportCertificateAndKey(
+  subject ? { subject } : { thumbprint },
+  passphrase
+);
+return { passphrase, pfx };
+};
+
+async function exportCertificateAndPrivateKeyAsync({
+  subject,
+  thumbprint
+}) {
+  validateSubjectAndThumbprint(subject, thumbprint);
+  const passphrase = (await promisify(randomBytes)(12)).toString('hex');
+  const pfx = await promisify(exportCertificateAndKeyAsync)(
     subject ? { subject } : { thumbprint },
     passphrase
   );
@@ -29,4 +51,6 @@ function exportCertificateAndPrivateKey({
 
 module.exports = exportCertificateAndPrivateKey;
 module.exports.exportCertificateAndPrivateKey = exportCertificateAndPrivateKey;
+module.exports.exportCertificateAndPrivateKeyAsync = exportCertificateAndPrivateKeyAsync;
 module.exports.exportSystemCertificates = exportAllCertificates;
+module.exports.exportSystemCertificatesAsync = promisify(exportAllCertificatesAsync);
