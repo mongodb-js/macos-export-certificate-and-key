@@ -1,6 +1,7 @@
 #include <Security/Security.h>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace MacosExportCertificateAndKey {
 
