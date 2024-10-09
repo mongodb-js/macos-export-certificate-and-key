@@ -42,15 +42,19 @@ class CFPointer {
   T get() { return value_; }
 };
 
-const char* getSecErrorString(OSStatus status) {
-  CFPointer<CFStringRef> str = SecCopyErrorMessageString(status, NULL);
-  return CFStringGetCStringPtr(str.get(), kCFStringEncodingUTF8);
-}
-
 void failOnError(OSStatus status, const char* error) {
   if (status != errSecSuccess) {
-    char msg[256];
-    snprintf(msg, sizeof(msg), "%s: %s", error, getSecErrorString(status));
+    CFPointer<CFStringRef> str = SecCopyErrorMessageString(status, NULL);
+    std::string msg = std::string(error) + ": ";
+    size_t offset = msg.size();
+    msg.resize(
+      offset +
+      CFStringGetMaximumSizeForEncoding(
+          CFStringGetLength(str.get()),
+	        kCFStringEncodingUTF8) +
+      1);
+    CFStringGetCString(str.get(), &msg.data()[offset], msg.size() - offset, kCFStringEncodingUTF8);
+    msg.resize(strlen(msg.data()));
     throw std::runtime_error(msg);
   }
 }
