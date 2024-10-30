@@ -53,7 +53,7 @@ void failOnError(OSStatus status, const char* error) {
           CFStringGetLength(str.get()),
 	        kCFStringEncodingUTF8) +
       1);
-    CFStringGetCString(str.get(), &msg.data()[offset], msg.size() - offset, kCFStringEncodingUTF8);
+    CFStringGetCString(str.get(), &msg[offset], msg.size() - offset, kCFStringEncodingUTF8);
     msg.resize(strlen(msg.data()));
     throw std::runtime_error(msg);
   }
