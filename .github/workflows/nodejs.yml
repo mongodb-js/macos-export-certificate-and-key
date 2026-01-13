@@ -47,4 +47,6 @@ jobs:
 
           security find-identity -v "$KEYCHAIN"
       - name: Test
+        env:
+          NODE_OPTIONS: "--openssl-legacy-provider"
         run: npm test

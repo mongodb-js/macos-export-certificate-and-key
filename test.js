@@ -55,7 +55,7 @@ describe('exportCertificateAndPrivateKey', () => {
 
       it('loads a certificate based on its thumbprint', async() => {
         const { passphrase, pfx } = await fn({
-          thumbprint: Buffer.from('d755afda2bbad2509d39eca5968553b9103305af', 'hex')
+          thumbprint: Buffer.from('0d973f73b5dfea326162037f487a1207c48c9042', 'hex')
         });
         tls.connect({ ...tlsServerConnectOptions, passphrase, pfx });
         assert.strictEqual(await authorized, true);
