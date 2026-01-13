@@ -19,5 +19,32 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - name: Install Dependencies
         run: npm install
+      - name: Import Certificates for Testing
+        env:
+          TEST_PFX_PASSWORD: "pass"
+        run: |
+          set -euo pipefail
+
+          KEYCHAIN="$RUNNER_TEMP/gha-test.keychain-db"
+          KEYCHAIN_PW="gha-temp"
+
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+
+          # Ensure our own keychain and the default keychain are searchable
+          security list-keychains -d user -s "$KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
+          security default-keychain -d user -s "$KEYCHAIN"
+
+          security import testkeys/certificate.pfx \
+            -k "$KEYCHAIN" \
+            -P "$TEST_PFX_PASSWORD" \
+            -A 
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PW" "$KEYCHAIN"
+
+          security find-identity -v "$KEYCHAIN"
       - name: Test
         run: npm test
