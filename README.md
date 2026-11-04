@@ -1,4 +1,4 @@
-# macos-export-certificate-and-key
+# @mongodb-js/macos-export-certificate-and-key
 
 Access the macOS system certificate and key store.
 This module is a native addon. It will only successfully work on macOS 10.12+. No prebuilt binaries are currently provided.
